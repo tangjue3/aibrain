@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { RadarValues, Message, OnboardingState } from '@/api/types'
+import type { RadarValues, Message, OnboardingState, BasicInfo, LearningPreference, TechBackground } from '@/api/types'
 
 export const useUserProfileStore = defineStore('userProfile', () => {
   const userName = ref('')
@@ -8,6 +8,27 @@ export const useUserProfileStore = defineStore('userProfile', () => {
   const cognitiveLevel = ref(0)
   const onboardingCompleted = ref(false)
   const learningDays = ref(0)
+
+  const basicInfo = ref<BasicInfo>({
+    name: '',
+    grade: '',
+    major: '',
+    school: ''
+  })
+
+  const learningPreference = ref<LearningPreference>({
+    style: '',
+    dailyHours: '',
+    goal: '',
+    focusAreas: []
+  })
+
+  const techBackground = ref<TechBackground>({
+    languages: [],
+    frameworks: [],
+    proficiency: '',
+    projectExperience: ''
+  })
 
   const radarValues = ref<RadarValues>({
     knowledgeBase: 0,
@@ -55,16 +76,38 @@ export const useUserProfileStore = defineStore('userProfile', () => {
     Object.values(radarValues.value).every((v) => v > 0)
   )
 
+  const profileSummary = computed(() => {
+    const info = basicInfo.value
+    const pref = learningPreference.value
+    const tech = techBackground.value
+    return {
+      name: info.name || '同学',
+      grade: info.grade,
+      major: info.major,
+      school: info.school,
+      style: pref.style,
+      dailyHours: pref.dailyHours,
+      goal: pref.goal,
+      focusAreas: pref.focusAreas,
+      languages: tech.languages,
+      proficiency: tech.proficiency
+    }
+  })
+
   return {
     userName,
     avatar,
     cognitiveLevel,
     onboardingCompleted,
     learningDays,
+    basicInfo,
+    learningPreference,
+    techBackground,
     radarValues,
     onboarding,
     radarDimensions,
     isRadarComplete,
+    profileSummary,
     updateRadar,
     addMessage,
     completeOnboarding

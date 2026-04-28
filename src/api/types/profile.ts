@@ -24,10 +24,34 @@ export interface Message {
   payload?: any
 }
 
+export interface BasicInfo {
+  name: string
+  grade: string
+  major: string
+  school: string
+}
+
+export interface LearningPreference {
+  style: string
+  dailyHours: string
+  goal: string
+  focusAreas: string[]
+}
+
+export interface TechBackground {
+  languages: string[]
+  frameworks: string[]
+  proficiency: string
+  projectExperience: string
+}
+
 export interface UserProfile {
   id: string
   name: string
   avatar: string
+  basicInfo: BasicInfo
+  learningPreference: LearningPreference
+  techBackground: TechBackground
   radarValues: RadarValues
   cognitiveLevel: number
   onboardingCompleted: boolean

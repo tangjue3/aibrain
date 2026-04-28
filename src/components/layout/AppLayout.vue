@@ -3,13 +3,11 @@ import { ref } from 'vue'
 import { useMediaQuery } from '@vueuse/core'
 import { BREAKPOINTS } from '@/utils/constants'
 import Navbar from './Navbar.vue'
-import Sidebar from './Sidebar.vue'
 import ChatPanel from '@/components/chat/ChatPanel.vue'
 import { useAssessmentStore } from '@/stores/assessment'
 
 const isMobile = useMediaQuery(`(max-width: ${BREAKPOINTS.MOBILE_MAX}px)`)
 const assessmentStore = useAssessmentStore()
-const showMobileMenu = ref(false)
 </script>
 
 <template>
@@ -28,22 +26,9 @@ const showMobileMenu = ref(false)
     </transition>
 
     <Navbar />
-    <div class="layout-body">
-      <Sidebar v-if="!isMobile" />
-      <main class="main-content">
-        <slot />
-      </main>
-    </div>
-
-    <el-drawer
-      v-if="isMobile"
-      v-model="showMobileMenu"
-      direction="ltr"
-      size="260px"
-      :with-header="false"
-    >
-      <Sidebar />
-    </el-drawer>
+    <main class="main-content">
+      <slot />
+    </main>
 
     <ChatPanel />
   </div>
@@ -88,12 +73,6 @@ const showMobileMenu = ref(false)
   color: inherit;
   font-size: 18px;
   cursor: pointer;
-}
-
-.layout-body {
-  display: flex;
-  flex: 1;
-  overflow: hidden;
 }
 
 .main-content {

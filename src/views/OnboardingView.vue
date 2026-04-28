@@ -1,220 +1,460 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserProfileStore } from '@/stores/userProfile'
 import { useMediaQuery } from '@vueuse/core'
 import { BREAKPOINTS } from '@/utils/constants'
-import TypingBubble from '@/components/chat/TypingBubble.vue'
-import QuickReply from '@/components/chat/QuickReply.vue'
 import RadarChart from '@/components/charts/RadarChart.vue'
-import { gsap } from 'gsap'
-import type { Message } from '@/api/types'
 
 const store = useUserProfileStore()
 const router = useRouter()
 const isMobile = useMediaQuery(`(max-width: ${BREAKPOINTS.MOBILE_MAX}px)`)
-const inputText = ref('')
-const chatContainerRef = ref<HTMLElement>()
-const radarChartRef = ref<InstanceType<typeof RadarChart>>()
-let inactivityTimer: number | null = null
 
-// Initial system greeting
-const initMessages = () => {
-  if (store.onboarding.conversation.length === 0) {
-    store.addMessage({
-      id: '1',
-      role: 'assistant',
-      content: '你好！欢迎来到智学脑 🎉\n\n我是你的 AI 学伴，在开始学习之前，我想先了解你的情况，以便为你定制最佳学习路径。\n\n首先，你当前是计算机专业哪个阶段的学生呢？',
-      type: 'text',
-      timestamp: Date.now(),
-      options: ['大一新生', '大二在读', '大三/大四', '研一及以上']
-    })
+const currentStep = ref(0)
+const isTransitioning = ref(false)
+const isGenerating = ref(false)
+const isGenerated = ref(false)
+
+const steps = [
+  { title: '基本信息', desc: '让我们认识你' },
+  { title: '学习偏好', desc: '了解你的学习方式' },
+  { title: '技术背景', desc: '评估你的技术能力' },
+  { title: '画像生成', desc: '生成你的专属画像' }
+]
+
+const formData = ref({
+  name: store.basicInfo.name || '',
+  grade: store.basicInfo.grade || '',
+  major: store.basicInfo.major || '',
+  school: store.basicInfo.school || '',
+  style: store.learningPreference.style || '',
+  dailyHours: store.learningPreference.dailyHours || '',
+  goal: store.learningPreference.goal || '',
+  focusAreas: [...(store.learningPreference.focusAreas || [])],
+  languages: [...(store.techBackground.languages || [])],
+  frameworks: [...(store.techBackground.frameworks || [])],
+  proficiency: store.techBackground.proficiency || '',
+  projectExperience: store.techBackground.projectExperience || ''
+})
+
+const gradeOptions = ['大一', '大二', '大三', '大四', '研一', '研二', '研三', '博士']
+const styleOptions = [
+  { value: 'visual', label: '视觉学习', desc: '偏好图表、视频、思维导图' },
+  { value: 'reading', label: '阅读学习', desc: '偏好文档、教材、技术博客' },
+  { value: 'hands-on', label: '实践学习', desc: '偏好动手编码、项目实战' },
+  { value: 'social', label: '交流学习', desc: '偏好讨论、结对编程、社区' }
+]
+const hoursOptions = ['<1小时', '1-2小时', '2-4小时', '4-6小时', '6小时以上']
+const goalOptions = [
+  { value: 'exam', label: '应对考试' },
+  { value: 'job', label: '求职准备' },
+  { value: 'interest', label: '兴趣驱动' },
+  { value: 'research', label: '科研需要' },
+  { value: 'career', label: '职业提升' }
+]
+const focusAreaOptions = ['算法与数据结构', '系统设计', '前端开发', '后端开发', '人工智能', '网络安全', '数据库', '移动开发', '云计算', 'DevOps']
+const languageOptions = ['C', 'C++', 'Java', 'Python', 'JavaScript', 'TypeScript', 'Go', 'Rust', 'C#', 'PHP', 'Swift', 'Kotlin']
+const frameworkOptions = ['React', 'Vue', 'Angular', 'Spring Boot', 'Django', 'Flask', 'Express', 'Next.js', 'Node.js', 'Flutter', 'PyTorch', 'TensorFlow']
+const proficiencyOptions = [
+  { value: 'beginner', label: '入门阶段', score: 20 },
+  { value: 'elementary', label: '初级水平', score: 40 },
+  { value: 'intermediate', label: '中级水平', score: 60 },
+  { value: 'advanced', label: '高级水平', score: 80 },
+  { value: 'expert', label: '专家水平', score: 95 }
+]
+
+const toggleArrayItem = (arr: string[], item: string) => {
+  const idx = arr.indexOf(item)
+  if (idx >= 0) arr.splice(idx, 1)
+  else arr.push(item)
+}
+
+const isFocusSelected = (item: string) => formData.value.focusAreas.includes(item)
+const isLangSelected = (item: string) => formData.value.languages.includes(item)
+const isFwSelected = (item: string) => formData.value.frameworks.includes(item)
+
+const canNext = computed(() => {
+  const d = formData.value
+  switch (currentStep.value) {
+    case 0: return d.name.trim() !== '' && d.grade !== '' && d.major.trim() !== ''
+    case 1: return d.style !== '' && d.dailyHours !== '' && d.goal !== '' && d.focusAreas.length > 0
+    case 2: return d.languages.length > 0 && d.proficiency !== ''
+    default: return true
+  }
+})
+
+const saveCurrentStep = () => {
+  const d = formData.value
+  switch (currentStep.value) {
+    case 0:
+      store.basicInfo = { name: d.name, grade: d.grade, major: d.major, school: d.school }
+      store.userName = d.name
+      break
+    case 1:
+      store.learningPreference = { style: d.style, dailyHours: d.dailyHours, goal: d.goal, focusAreas: [...d.focusAreas] }
+      break
+    case 2:
+      store.techBackground = { languages: [...d.languages], frameworks: [...d.frameworks], proficiency: d.proficiency, projectExperience: d.projectExperience }
+      break
   }
 }
 
-const messages = computed(() => store.onboarding.conversation)
-
-const handleSend = () => {
-  const text = inputText.value.trim()
-  if (!text) return
-
-  store.addMessage({
-    id: Date.now().toString(),
-    role: 'user',
-    content: text,
-    type: 'text',
-    timestamp: Date.now()
-  })
-  inputText.value = ''
-  resetInactivityTimer()
-  simulateResponse(text)
-}
-
-const handleQuickReply = (option: string) => {
-  store.addMessage({
-    id: Date.now().toString(),
-    role: 'user',
-    content: option,
-    type: 'text',
-    timestamp: Date.now()
-  })
-  resetInactivityTimer()
-  simulateResponse(option)
-}
-
-const simulateResponse = (userInput: string) => {
-  const step = store.onboarding.step
-
-  // Simulate radar update based on step
-  const dimensions = ['knowledgeBase', 'cognitiveStyle', 'errorPreference', 'logic', 'progress', 'engagement']
-  if (step < dimensions.length) {
-    const dim = dimensions[step]
-    const value = Math.floor(Math.random() * 40) + 30 // 30-70 range
-    store.updateRadar(dim, value)
-  }
-
-  // Simulate AI response based on step
-  const responses = [
-    { text: '了解了！你的基础情况已记录。\n\n接下来，你平时更喜欢通过哪种方式学习新知识？', options: ['看视频教程', '读教材文档', '动手实操项目', '和别人讨论交流'] },
-    { text: '明白你的学习风格了。\n\n在做编程题时，你通常遇到错误的第一反应是？', options: ['自己调试排查', '搜索报错信息', '直接问同学/老师', '看答案或参考代码'] },
-    { text: '谢谢你的反馈。\n\n你对目前自己的逻辑思维能力怎么评价？', options: ['很强，喜欢算法题', '一般，能应对课程要求', '较弱，需要加强训练', '不确定，没认真评估过'] },
-    { text: '了解了。\n\n目前你在专业学习上的进度感觉如何？', options: ['超过课程进度', '按部就班', '有些吃力，勉强跟上', '跟不上，需要帮助'] },
-    { text: '最后一个问题，你对学习的投入和参与度怎样？', options: ['非常积极，每天学习', '比较规律，每周几次', '考前突击为主', '不太投入，缺乏动力'] },
-    { text: `太棒了！你的学习画像已经初步完成 📊\n\n根据你的回答，系统已经为你生成了个性化的 6 维能力画像。你可以在右侧雷达图中查看。\n\n接下来，我们将为你规划一条专属的学习路径。准备好了吗？`, options: ['开始学习之旅 🚀', '先看看画像详情'] }
-  ]
-
-  const idx = Math.min(step, responses.length - 1)
-  const resp = responses[idx]
-
+const goNext = () => {
+  if (!canNext.value || isTransitioning.value) return
+  saveCurrentStep()
+  isTransitioning.value = true
   setTimeout(() => {
-    store.addMessage({
-      id: Date.now().toString(),
-      role: 'assistant',
-      content: resp.text,
-      type: 'text',
-      timestamp: Date.now(),
-      options: resp.options
-    })
-    scrollToBottom()
-  }, 800)
+    currentStep.value++
+    isTransitioning.value = false
+    if (currentStep.value === 3) {
+      generateProfile()
+    }
+  }, 300)
+}
+
+const goPrev = () => {
+  if (currentStep.value <= 0 || isTransitioning.value) return
+  isTransitioning.value = true
+  setTimeout(() => {
+    currentStep.value--
+    isTransitioning.value = false
+  }, 300)
+}
+
+const generateProfile = () => {
+  isGenerating.value = true
+
+  const d = formData.value
+  const langCount = d.languages.length
+  const fwCount = d.frameworks.length
+  const profScore = proficiencyOptions.find(p => p.value === d.proficiency)?.score || 30
+  const focusCount = d.focusAreas.length
+
+  const styleMap: Record<string, number> = { visual: 70, reading: 55, 'hands-on': 85, social: 45 }
+  const goalMap: Record<string, number> = { exam: 50, job: 75, interest: 80, research: 65, career: 70 }
+  const hoursMap: Record<string, number> = { '<1小时': 25, '1-2小时': 40, '2-4小时': 60, '4-6小时': 80, '6小时以上': 95 }
+
+  const knowledgeBase = Math.min(100, Math.round(profScore * 0.5 + langCount * 5 + fwCount * 3))
+  const cognitiveStyle = styleMap[d.style] || 50
+  const errorPreference = Math.min(100, Math.round(profScore * 0.6 + (d.projectExperience ? 15 : 0)))
+  const logic = Math.min(100, Math.round(profScore * 0.7 + focusCount * 4))
+  const progress = Math.min(100, Math.round(profScore * 0.4 + langCount * 6))
+  const engagement = hoursMap[d.dailyHours] || 50
+
+  const targets = { knowledgeBase, cognitiveStyle, errorPreference, logic, progress, engagement }
+  const keys = Object.keys(targets) as (keyof typeof targets)[]
+  let i = 0
+
+  const interval = setInterval(() => {
+    if (i >= keys.length) {
+      clearInterval(interval)
+      isGenerating.value = false
+      isGenerated.value = true
+      return
+    }
+    store.updateRadar(keys[i], targets[keys[i]])
+    i++
+  }, 400)
 }
 
 const startLearning = () => {
   store.completeOnboarding()
   router.push('/dashboard')
 }
-
-const resetInactivityTimer = () => {
-  if (inactivityTimer) clearTimeout(inactivityTimer)
-  inactivityTimer = window.setTimeout(() => {
-    const lastMsg = messages.value[messages.value.length - 1]
-    if (lastMsg?.role === 'assistant') {
-      // Show nudge message
-      const nudge: Message = {
-        id: `nudge_${Date.now()}`,
-        role: 'system',
-        content: '💡 试着点击一个选项，或告诉我你的想法～',
-        type: 'text',
-        timestamp: Date.now()
-      }
-      store.onboarding.conversation.push(nudge)
-      scrollToBottom()
-    }
-    resetInactivityTimer()
-  }, 20000)
-}
-
-const scrollToBottom = () => {
-  setTimeout(() => {
-    if (chatContainerRef.value) {
-      chatContainerRef.value.scrollTop = chatContainerRef.value.scrollHeight
-    }
-  }, 100)
-}
-
-const canFinish = computed(() => store.onboarding.step >= 5)
-
-onMounted(() => {
-  initMessages()
-  resetInactivityTimer()
-})
-
-onUnmounted(() => {
-  if (inactivityTimer) clearTimeout(inactivityTimer)
-})
 </script>
 
 <template>
   <div class="onboarding-page">
     <div class="onboarding-container" :class="{ 'is-mobile': isMobile }">
-      <!-- Chat area -->
-      <div class="chat-section">
-        <div ref="chatContainerRef" class="chat-messages">
-          <div
-            v-for="msg in messages"
-            :key="msg.id"
-            class="message"
-            :class="`msg-${msg.role}`"
-          >
-            <div v-if="msg.role === 'system'" class="system-nudge">
-              {{ msg.content }}
+      <div class="main-section">
+        <div class="header">
+          <h1 class="page-title">学习画像采集</h1>
+          <p class="page-desc">完善你的个人信息，AI 将为你定制专属学习路径</p>
+          
+          <div class="progress-tracker">
+            <div
+              v-for="(step, idx) in steps"
+              :key="idx"
+              class="progress-item"
+            >
+              <div class="step-circle" :class="{ active: idx === currentStep, done: idx < currentStep }">
+                <span v-if="idx < currentStep" class="check-icon">✓</span>
+                <span v-else>{{ idx + 1 }}</span>
+              </div>
+              <div v-if="idx < steps.length - 1" class="step-line" :class="{ active: idx < currentStep }" />
             </div>
-            <template v-else>
-              <div class="msg-avatar">
-                {{ msg.role === 'user' ? '👤' : '🤖' }}
-              </div>
-              <div class="msg-body">
-                <TypingBubble
-                  v-if="msg.role === 'assistant'"
-                  :text="msg.content"
-                  :speed="25"
-                />
-                <div v-else class="user-bubble">
-                  {{ msg.content }}
-                </div>
-              </div>
-            </template>
           </div>
         </div>
 
-        <!-- Quick replies for last message options -->
-        <div v-if="messages.length > 0" class="input-area">
-          <QuickReply
-            v-if="messages[messages.length - 1]?.options?.length"
-            :options="messages[messages.length - 1].options || []"
-            @select="handleQuickReply"
-          />
-          <div class="manual-input">
-            <input
-              v-model="inputText"
-              class="text-input"
-              placeholder="或者输入你的想法..."
-              @keydown.enter="handleSend"
-            />
-            <button class="send-btn" :disabled="!inputText.trim()" @click="handleSend">
-              发送
-            </button>
+        <div class="step-content" :class="{ 'fade-out': isTransitioning }">
+          <div v-if="currentStep === 0" class="step-panel">
+            <h2 class="step-title">基本信息</h2>
+            <p class="step-subtitle">让我们认识一下你</p>
+
+            <div class="form-group">
+              <label class="form-label">姓名 <span class="required">*</span></label>
+              <input v-model="formData.name" class="form-input" placeholder="请输入你的姓名" />
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">年级 <span class="required">*</span></label>
+              <div class="grade-grid">
+                <button
+                  v-for="opt in gradeOptions"
+                  :key="opt"
+                  class="grade-btn"
+                  :class="{ selected: formData.grade === opt }"
+                  @click="formData.grade = opt"
+                >
+                  {{ opt }}
+                </button>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">专业 <span class="required">*</span></label>
+              <input v-model="formData.major" class="form-input" placeholder="如：计算机科学与技术" />
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">学校</label>
+              <input v-model="formData.school" class="form-input" placeholder="请输入你的学校（选填）" />
+            </div>
           </div>
+
+          <div v-if="currentStep === 1" class="step-panel">
+            <h2 class="step-title">学习偏好</h2>
+            <p class="step-subtitle">了解你的学习方式，更好地为你推荐内容</p>
+
+            <div class="form-group">
+              <label class="form-label">学习风格 <span class="required">*</span></label>
+              <div class="card-grid cols-2">
+                <button
+                  v-for="opt in styleOptions"
+                  :key="opt.value"
+                  class="card-btn"
+                  :class="{ selected: formData.style === opt.value }"
+                  @click="formData.style = opt.value"
+                >
+                  <span class="card-label">{{ opt.label }}</span>
+                  <span class="card-desc">{{ opt.desc }}</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">每日学习时长 <span class="required">*</span></label>
+              <div class="option-grid cols-5">
+                <button
+                  v-for="opt in hoursOptions"
+                  :key="opt"
+                  class="option-btn"
+                  :class="{ selected: formData.dailyHours === opt }"
+                  @click="formData.dailyHours = opt"
+                >
+                  {{ opt }}
+                </button>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">学习目标 <span class="required">*</span></label>
+              <div class="option-grid cols-3">
+                <button
+                  v-for="opt in goalOptions"
+                  :key="opt.value"
+                  class="option-btn"
+                  :class="{ selected: formData.goal === opt.value }"
+                  @click="formData.goal = opt.value"
+                >
+                  {{ opt.label }}
+                </button>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">关注方向 <span class="required">*</span></label>
+              <div class="tag-grid">
+                <button
+                  v-for="opt in focusAreaOptions"
+                  :key="opt"
+                  class="tag-btn"
+                  :class="{ selected: isFocusSelected(opt) }"
+                  @click="toggleArrayItem(formData.focusAreas, opt)"
+                >
+                  {{ opt }}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="currentStep === 2" class="step-panel">
+            <h2 class="step-title">技术背景</h2>
+            <p class="step-subtitle">评估你的技术能力，精准匹配学习内容</p>
+
+            <div class="form-group">
+              <label class="form-label">掌握的编程语言 <span class="required">*</span></label>
+              <div class="tag-grid">
+                <button
+                  v-for="opt in languageOptions"
+                  :key="opt"
+                  class="tag-btn"
+                  :class="{ selected: isLangSelected(opt) }"
+                  @click="toggleArrayItem(formData.languages, opt)"
+                >
+                  {{ opt }}
+                </button>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">熟悉的框架/工具</label>
+              <div class="tag-grid">
+                <button
+                  v-for="opt in frameworkOptions"
+                  :key="opt"
+                  class="tag-btn"
+                  :class="{ selected: isFwSelected(opt) }"
+                  @click="toggleArrayItem(formData.frameworks, opt)"
+                >
+                  {{ opt }}
+                </button>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">综合技术水平 <span class="required">*</span></label>
+              <div class="option-grid cols-5">
+                <button
+                  v-for="opt in proficiencyOptions"
+                  :key="opt.value"
+                  class="option-btn"
+                  :class="{ selected: formData.proficiency === opt.value }"
+                  @click="formData.proficiency = opt.value"
+                >
+                  {{ opt.label }}
+                </button>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">项目经验</label>
+              <textarea
+                v-model="formData.projectExperience"
+                class="form-textarea"
+                placeholder="简要描述你做过的项目或实习经历（选填）"
+                rows="3"
+              />
+            </div>
+          </div>
+
+          <div v-if="currentStep === 3" class="step-panel">
+            <h2 class="step-title">画像生成</h2>
+            <p class="step-subtitle">{{ isGenerating ? 'AI 正在分析你的信息...' : '你的专属学习画像已生成' }}</p>
+
+            <div v-if="isGenerating" class="generating-state">
+              <div class="spinner" />
+              <p class="gen-text">正在生成你的六维能力画像...</p>
+            </div>
+
+            <div v-if="isGenerated" class="profile-summary">
+              <div class="summary-header">
+                <div class="avatar-circle">{{ formData.name.charAt(0) }}</div>
+                <div class="summary-info">
+                  <h3>{{ formData.name }}</h3>
+                  <p>{{ formData.grade }} · {{ formData.major }}{{ formData.school ? ' · ' + formData.school : '' }}</p>
+                </div>
+              </div>
+
+              <div class="summary-grid">
+                <div class="summary-item">
+                  <span class="summary-label">学习风格</span>
+                  <span class="summary-value">{{ styleOptions.find(s => s.value === formData.style)?.label }}</span>
+                </div>
+                <div class="summary-item">
+                  <span class="summary-label">每日学习</span>
+                  <span class="summary-value">{{ formData.dailyHours }}</span>
+                </div>
+                <div class="summary-item">
+                  <span class="summary-label">学习目标</span>
+                  <span class="summary-value">{{ goalOptions.find(g => g.value === formData.goal)?.label }}</span>
+                </div>
+                <div class="summary-item">
+                  <span class="summary-label">技术水平</span>
+                  <span class="summary-value">{{ proficiencyOptions.find(p => p.value === formData.proficiency)?.label }}</span>
+                </div>
+              </div>
+
+              <div class="summary-section">
+                <span class="summary-label">关注方向</span>
+                <div class="summary-tags">
+                  <span v-for="area in formData.focusAreas" :key="area" class="summary-tag">{{ area }}</span>
+                </div>
+              </div>
+
+              <div class="summary-section">
+                <span class="summary-label">编程语言</span>
+                <div class="summary-tags">
+                  <span v-for="lang in formData.languages" :key="lang" class="summary-tag">{{ lang }}</span>
+                </div>
+              </div>
+
+              <div v-if="formData.frameworks.length > 0" class="summary-section">
+                <span class="summary-label">框架/工具</span>
+                <div class="summary-tags">
+                  <span v-for="fw in formData.frameworks" :key="fw" class="summary-tag">{{ fw }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="step-actions">
+          <button v-if="currentStep > 0" class="btn btn-secondary" @click="goPrev">
+            上一步
+          </button>
+          <div v-else />
           <button
-            v-if="canFinish"
-            class="skip-btn"
+            v-if="currentStep < 3"
+            class="btn btn-primary"
+            :disabled="!canNext"
+            @click="goNext"
+          >
+            下一步
+          </button>
+          <button
+            v-if="currentStep === 3 && isGenerated"
+            class="btn btn-primary"
             @click="startLearning"
           >
-            直接开始学习 →
+            开始学习之旅
           </button>
         </div>
       </div>
 
-      <!-- Radar Card (right side on desktop, bottom on mobile) -->
       <div class="radar-section" :class="{ 'is-mobile': isMobile }">
         <div class="radar-card">
-          <h4>📊 学习画像</h4>
-          <RadarChart ref="radarChartRef" :width="isMobile ? 240 : 280" :height="isMobile ? 240 : 280" />
-          <div v-if="store.isRadarComplete" class="complete-badge">
-            ✅ 画像完成
+          <h4>六维能力画像</h4>
+          <RadarChart :width="isMobile ? 240 : 260" :height="isMobile ? 240 : 260" />
+          <div v-if="isGenerated" class="complete-badge">
+            画像已完成
           </div>
           <div v-else class="progress-hint">
-            继续对话完成画像 ({{ store.onboarding.step }}/5)
+            完成采集后生成画像
+          </div>
+
+          <div v-if="isGenerated" class="radar-details">
+            <div
+              v-for="dim in store.radarDimensions"
+              :key="dim.key"
+              class="radar-dim-item"
+            >
+              <span class="dim-name">{{ dim.name }}</span>
+              <div class="dim-bar">
+                <div class="dim-bar-fill" :style="{ width: store.radarValues[dim.key] + '%' }" />
+              </div>
+              <span class="dim-value">{{ store.radarValues[dim.key] }}</span>
+            </div>
           </div>
         </div>
       </div>
@@ -232,143 +472,487 @@ onUnmounted(() => {
 
 .onboarding-container {
   display: flex;
-  gap: var(--spacing-lg);
+  gap: var(--spacing-xl);
   max-width: 1000px;
   width: 100%;
 }
 
 .onboarding-container.is-mobile {
-  flex-direction: column;
+  flex-direction: column-reverse;
 }
 
-.chat-section {
+.main-section {
   flex: 1;
-  max-width: 720px;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  background: var(--bg-card);
-  border-radius: var(--border-radius-lg);
-  box-shadow: var(--shadow-md);
+  background: #ffffff;
+  border-radius: 16px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
   overflow: hidden;
 }
 
-.chat-messages {
+.header {
+  padding: 32px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.page-title {
+  font-size: 24px;
+  font-weight: 700;
+  color: #1a1a1a;
+  margin: 0 0 8px;
+  font-family: 'Kaiti', '楷体', 'STKaiti', serif;
+}
+
+.page-desc {
+  font-size: 14px;
+  color: #666666;
+  margin: 0 0 24px;
+}
+
+.progress-tracker {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px;
+}
+
+.progress-item {
+  display: flex;
+  align-items: center;
   flex: 1;
-  overflow-y: auto;
-  padding: var(--spacing-lg);
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-md);
-  min-height: 400px;
-  max-height: 60vh;
+  justify-content: center;
 }
 
-.message {
-  display: flex;
-  gap: var(--spacing-sm);
-  max-width: 100%;
-}
-
-.msg-user {
-  flex-direction: row-reverse;
-}
-
-.msg-avatar {
-  width: 36px;
-  height: 36px;
+.step-circle {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 22px;
+  font-size: 14px;
+  font-weight: 600;
+  background: #e8e8e8;
+  color: #999999;
   flex-shrink: 0;
-  border-radius: 50%;
-  background: var(--bg-hover);
+  transition: all 0.3s ease;
 }
 
-.msg-body {
-  max-width: 75%;
+.step-circle.active {
+  background: #1e6fff;
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(30, 111, 255, 0.3);
 }
 
-.user-bubble {
-  background: var(--color-primary);
-  color: #fff;
-  padding: var(--spacing-sm) var(--spacing-md);
-  border-radius: var(--border-radius) 0 var(--border-radius) var(--border-radius);
-  word-break: break-word;
+.step-circle.done {
+  background: #1e6fff;
+  color: #ffffff;
 }
 
-.system-nudge {
-  width: 100%;
-  text-align: center;
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-  padding: var(--spacing-sm);
-  animation: fadeInUp 0.5s ease;
+.check-icon {
+  font-size: 14px;
 }
 
-@keyframes fadeInUp {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.input-area {
-  padding: var(--spacing-md);
-  border-top: 1px solid var(--border-color);
-}
-
-.manual-input {
-  display: flex;
-  gap: var(--spacing-sm);
-  margin-top: var(--spacing-sm);
-}
-
-.text-input {
+.step-line {
   flex: 1;
-  padding: 8px 12px;
-  border: 1px solid var(--border-color);
-  border-radius: 20px;
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font-size: var(--font-size-md);
+  height: 2px;
+  background: #e8e8e8;
+  margin: 0 8px;
+  min-width: 20px;
+  transition: background 0.3s ease;
+}
+
+.step-line.active {
+  background: #1e6fff;
+}
+
+.step-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 32px;
+  transition: opacity 0.3s ease;
+}
+
+.step-content.fade-out {
+  opacity: 0;
+}
+
+.step-panel {
+  animation: slideIn 0.3s ease;
+}
+
+@keyframes slideIn {
+  from { opacity: 0; transform: translateX(10px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.step-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #1a1a1a;
+  margin: 0 0 4px;
+}
+
+.step-subtitle {
+  font-size: 14px;
+  color: #999999;
+  margin: 0 0 24px;
+}
+
+.form-group {
+  margin-bottom: 24px;
+}
+
+.form-label {
+  display: block;
+  font-size: 14px;
+  font-weight: 500;
+  color: #333333;
+  margin-bottom: 8px;
+}
+
+.required {
+  color: #ff4d4f;
+}
+
+.form-input {
+  width: 100%;
+  padding: 12px 16px;
+  border: 1px solid #d9d9d9;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #333333;
+  font-size: 14px;
   font-family: inherit;
+  transition: all 0.2s ease;
+  box-sizing: border-box;
 }
 
-.text-input:focus {
+.form-input::placeholder {
+  color: #cccccc;
+}
+
+.form-input:focus {
   outline: none;
-  border-color: var(--color-primary);
+  border-color: #1e6fff;
+  box-shadow: 0 0 0 2px rgba(30, 111, 255, 0.1);
 }
 
-.send-btn {
-  padding: 8px 20px;
-  background: var(--color-primary);
-  color: #fff;
-  border: none;
-  border-radius: 20px;
+.form-textarea {
+  width: 100%;
+  padding: 12px 16px;
+  border: 1px solid #d9d9d9;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #333333;
+  font-size: 14px;
+  font-family: inherit;
+  resize: vertical;
+  transition: all 0.2s ease;
+  box-sizing: border-box;
+}
+
+.form-textarea::placeholder {
+  color: #cccccc;
+}
+
+.form-textarea:focus {
+  outline: none;
+  border-color: #1e6fff;
+  box-shadow: 0 0 0 2px rgba(30, 111, 255, 0.1);
+}
+
+.grade-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.grade-btn {
+  padding: 10px 12px;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #666666;
+  font-size: 14px;
   cursor: pointer;
-  font-size: var(--font-size-sm);
+  transition: all 0.2s ease;
+  text-align: center;
 }
 
-.send-btn:disabled {
+.grade-btn:hover {
+  border-color: #1e6fff;
+  color: #1e6fff;
+}
+
+.grade-btn.selected {
+  border-color: #1e6fff;
+  background: #e8f0ff;
+  color: #1e6fff;
+  font-weight: 500;
+}
+
+.option-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.option-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+.option-grid.cols-5 { grid-template-columns: repeat(5, 1fr); }
+
+.option-btn {
+  padding: 10px 12px;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #666666;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: center;
+}
+
+.option-btn:hover {
+  border-color: #1e6fff;
+  color: #1e6fff;
+}
+
+.option-btn.selected {
+  border-color: #1e6fff;
+  background: #e8f0ff;
+  color: #1e6fff;
+  font-weight: 500;
+}
+
+.card-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.card-grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
+
+.card-btn {
+  padding: 16px;
+  border: 1px solid #d9d9d9;
+  border-radius: 8px;
+  background: #ffffff;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.2s ease;
+}
+
+.card-btn:hover {
+  border-color: #1e6fff;
+}
+
+.card-btn.selected {
+  border-color: #1e6fff;
+  background: #e8f0ff;
+}
+
+.card-label {
+  display: block;
+  font-size: 14px;
+  font-weight: 500;
+  color: #333333;
+}
+
+.card-btn.selected .card-label {
+  color: #1e6fff;
+}
+
+.card-desc {
+  display: block;
+  font-size: 12px;
+  color: #999999;
+  margin-top: 4px;
+}
+
+.tag-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tag-btn {
+  padding: 6px 14px;
+  border: 1px solid #d9d9d9;
+  border-radius: 20px;
+  background: #ffffff;
+  color: #666666;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.tag-btn:hover {
+  border-color: #1e6fff;
+  color: #1e6fff;
+}
+
+.tag-btn.selected {
+  border-color: #1e6fff;
+  background: #1e6fff;
+  color: #ffffff;
+}
+
+.generating-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 0;
+}
+
+.spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid #e8e8e8;
+  border-top-color: #1e6fff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.gen-text {
+  margin-top: 16px;
+  color: #999999;
+  font-size: 14px;
+}
+
+.profile-summary {
+  animation: slideIn 0.4s ease;
+}
+
+.summary-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  background: #e8f0ff;
+  border-radius: 8px;
+  margin-bottom: 24px;
+}
+
+.avatar-circle {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: #1e6fff;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.summary-info h3 {
+  margin: 0;
+  font-size: 16px;
+  color: #1a1a1a;
+}
+
+.summary-info p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: #666666;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.summary-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.summary-label {
+  font-size: 12px;
+  color: #999999;
+}
+
+.summary-value {
+  font-size: 14px;
+  font-weight: 500;
+  color: #333333;
+}
+
+.summary-section {
+  margin-bottom: 16px;
+}
+
+.summary-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.summary-tag {
+  padding: 4px 10px;
+  background: #e8f0ff;
+  color: #1e6fff;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.step-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 32px;
+  border-top: 1px solid #f0f0f0;
+}
+
+.btn {
+  padding: 10px 24px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-primary {
+  background: #1e6fff;
+  color: #ffffff;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #185acd;
+}
+
+.btn-primary:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.skip-btn {
-  display: block;
-  width: 100%;
-  margin-top: var(--spacing-sm);
-  padding: 10px;
-  background: none;
-  border: 1px solid var(--color-primary);
-  border-radius: var(--border-radius-sm);
-  color: var(--color-primary);
-  cursor: pointer;
-  font-size: var(--font-size-sm);
+.btn-secondary {
+  background: #f5f5f5;
+  color: #666666;
+  border: 1px solid #d9d9d9;
+}
+
+.btn-secondary:hover {
+  background: #e8e8e8;
 }
 
 .radar-section {
-  width: 300px;
+  width: 320px;
   flex-shrink: 0;
 }
 
@@ -377,40 +961,78 @@ onUnmounted(() => {
 }
 
 .radar-card {
-  background: var(--bg-card);
-  border-radius: var(--border-radius-lg);
-  box-shadow: var(--shadow-md);
-  padding: var(--spacing-lg);
+  background: #ffffff;
+  border-radius: 16px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
+  padding: 24px;
   text-align: center;
   position: sticky;
-  top: var(--spacing-lg);
+  top: 24px;
 }
 
 .radar-card h4 {
-  margin-bottom: var(--spacing-md);
-  font-size: var(--font-size-lg);
-  color: var(--text-primary);
+  margin: 0 0 16px;
+  font-size: 16px;
+  color: #1a1a1a;
+  font-weight: 600;
 }
 
 .complete-badge {
-  margin-top: var(--spacing-md);
+  margin-top: 12px;
   padding: 6px 16px;
-  background: #ecf8e6;
-  color: var(--color-success);
+  background: #f6ffed;
+  color: #52c41a;
   border-radius: 20px;
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  animation: pulse 2s ease infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.05); }
+  font-size: 13px;
+  font-weight: 500;
+  display: inline-block;
 }
 
 .progress-hint {
-  margin-top: var(--spacing-md);
-  font-size: var(--font-size-sm);
-  color: var(--text-secondary);
+  margin-top: 12px;
+  font-size: 13px;
+  color: #999999;
+}
+
+.radar-details {
+  margin-top: 24px;
+  text-align: left;
+}
+
+.radar-dim-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.dim-name {
+  font-size: 12px;
+  color: #999999;
+  width: 56px;
+  flex-shrink: 0;
+}
+
+.dim-bar {
+  flex: 1;
+  height: 6px;
+  background: #f0f0f0;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.dim-bar-fill {
+  height: 100%;
+  background: #1e6fff;
+  border-radius: 3px;
+  transition: width 0.6s ease;
+}
+
+.dim-value {
+  font-size: 12px;
+  color: #333333;
+  font-weight: 600;
+  width: 28px;
+  text-align: right;
 }
 </style>
